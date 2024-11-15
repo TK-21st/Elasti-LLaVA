@@ -4,16 +4,20 @@ import os
 import json
 from tqdm import tqdm
 import shortuuid
+from dataclasses import fields
+
+from types import SimpleNamespace
 
 from llava.constants import IMAGE_TOKEN_INDEX, DEFAULT_IMAGE_TOKEN, DEFAULT_IM_START_TOKEN, DEFAULT_IM_END_TOKEN
 from llava.conversation import conv_templates, SeparatorStyle
 from llava.model.builder import load_pretrained_model
 from llava.utils import disable_torch_init
 from llava.mm_utils import tokenizer_image_token, process_images, get_model_name_from_path
-
+from llava.model.multimodal_router.builder import build_vision_router
+from llava.train.distill import DistillModelArguments
 from PIL import Image
 import math
-
+from llava.elastic_mixin import disable_elastic_mode
 
 def split_list(lst, n):
     """Split a list into n (roughly) equal-sized chunks"""
@@ -26,13 +30,7 @@ def get_chunk(lst, n, k):
     return chunks[k]
 
 
-def eval_model(args):
-    # Model
-    disable_torch_init()
-    model_path = os.path.expanduser(args.model_path)
-    model_name = get_model_name_from_path(model_path)
-    tokenizer, model, image_processor, context_len = load_pretrained_model(model_path, args.model_base, model_name)
-
+def generate_answers(args, model_name, model, tokenizer, image_processor):
     questions = [json.loads(q) for q in open(os.path.expanduser(args.question_file), "r")]
     questions = get_chunk(questions, args.num_chunks, args.chunk_idx)
     answers_file = os.path.expanduser(args.answers_file)
@@ -68,7 +66,7 @@ def eval_model(args):
                 top_p=args.top_p,
                 num_beams=args.num_beams,
                 # no_repeat_ngram_size=3,
-                max_new_tokens=1024,
+                max_new_tokens=args.max_new_tokens,
                 use_cache=True)
 
         outputs = tokenizer.batch_decode(output_ids, skip_special_tokens=True)[0].strip()
@@ -83,10 +81,39 @@ def eval_model(args):
         ans_file.flush()
     ans_file.close()
 
+def eval_model(args):
+    # Model
+    disable_torch_init()
+    model_path = os.path.expanduser(args.model_path)
+    model_name = get_model_name_from_path(model_path)
+    tokenizer, model, image_processor, context_len = load_pretrained_model(model_path, args.model_base, model_name)
+
+    if args.mm_router_ckpt_dir is not None:
+        with open(os.path.join(args.mm_router_ckpt_dir, "config.json"), "r") as f:
+            cfg = SimpleNamespace(**json.load(f))
+
+        if getattr(model, 'mm_router', None) is None:
+            model.get_model().mm_router = build_vision_router(cfg)
+
+        mm_router_weights = torch.load(os.path.join(args.mm_router_ckpt_dir, "trainable_parameters.bin"), map_location=model.device)
+        def get_w(weights, keyword):
+            return {k.split(keyword + '.')[1]: v for k, v in weights.items() if keyword in k}
+        model.get_model().mm_router.load_state_dict(get_w(mm_router_weights, 'mm_router'))
+        model.get_model().mm_router = model.get_model().mm_router.to(device=model.device, dtype=model.dtype)
+
+    model.eval()
+
+    if args.mm_router_ckpt_dir is not None:
+        generate_answers(args, model_name, model, tokenizer, image_processor)
+    else:
+        with disable_elastic_mode():
+            generate_answers(args, model_name, model, tokenizer, image_processor)
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--model-path", type=str, default="facebook/opt-350m")
     parser.add_argument("--model-base", type=str, default=None)
+    parser.add_argument("--mm-router-ckpt-dir", type=str, default=None)
     parser.add_argument("--image-folder", type=str, default="")
     parser.add_argument("--question-file", type=str, default="tables/question.jsonl")
     parser.add_argument("--answers-file", type=str, default="answer.jsonl")
@@ -96,6 +123,7 @@ if __name__ == "__main__":
     parser.add_argument("--temperature", type=float, default=0.2)
     parser.add_argument("--top_p", type=float, default=None)
     parser.add_argument("--num_beams", type=int, default=1)
+    parser.add_argument("--max_new_tokens", type=int, default=1024)
     args = parser.parse_args()
 
     eval_model(args)

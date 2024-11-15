@@ -20,11 +20,12 @@ import torch.nn as nn
 
 from .multimodal_encoder.builder import build_vision_tower
 from .multimodal_projector.builder import build_vision_projector
+from .multimodal_router.builder import build_vision_router
 
 from llava.constants import IGNORE_INDEX, IMAGE_TOKEN_INDEX, DEFAULT_IMAGE_PATCH_TOKEN, DEFAULT_IM_START_TOKEN, DEFAULT_IM_END_TOKEN
 
 from llava.mm_utils import get_anyres_image_grid_shape
-
+from llava.elastic_mixin import is_elastic_mode
 
 class LlavaMetaModel:
 
@@ -76,6 +77,9 @@ class LlavaMetaModel:
         self.config.mm_vision_select_feature = mm_vision_select_feature
         self.config.mm_patch_merge_type = mm_patch_merge_type
 
+        self.config.mm_router_type = getattr(model_args, 'mm_router_type', 'linear')
+        self.config.mm_router_top_k = getattr(model_args, 'mm_router_top_k', -1)
+
         if getattr(self, 'mm_projector', None) is None:
             self.mm_projector = build_vision_projector(self.config)
 
@@ -89,12 +93,27 @@ class LlavaMetaModel:
             for p in self.mm_projector.parameters():
                 p.requires_grad = True
 
+        if getattr(self, 'mm_router', None) is None:
+            self.mm_router = build_vision_router(self.config)
+        else:
+            # In case it is frozen by LoRA
+            for p in self.mm_router.parameters():
+                p.requires_grad = True
+
         if pretrain_mm_mlp_adapter is not None:
             mm_projector_weights = torch.load(pretrain_mm_mlp_adapter, map_location='cpu')
             def get_w(weights, keyword):
                 return {k.split(keyword + '.')[1]: v for k, v in weights.items() if keyword in k}
 
             self.mm_projector.load_state_dict(get_w(mm_projector_weights, 'mm_projector'))
+
+        # pretrain_mm_router = model_args.pretrain_mm_router
+        # if pretrain_mm_router is not None:
+        #     mm_router_weights = torch.load(pretrain_mm_router, map_location='cpu')
+        #     def get_w(weights, keyword):
+        #         return {k.split(keyword + '.')[1]: v for k, v in weights.items() if keyword in k}
+
+        #     self.mm_router.load_state_dict(get_w(mm_router_weights, 'mm_router'))
 
 
 def unpad_image(tensor, original_size):
@@ -140,6 +159,11 @@ class LlavaMetaForCausalLM(ABC):
     def encode_images(self, images):
         image_features = self.get_model().get_vision_tower()(images)
         image_features = self.get_model().mm_projector(image_features)
+        self._image_features_N_tokens = image_features.size(1) # for load_balancing loss
+
+        if is_elastic_mode():
+            image_features = self.get_model().mm_router(image_features)
+
         return image_features
 
     def prepare_inputs_labels_for_multimodal(

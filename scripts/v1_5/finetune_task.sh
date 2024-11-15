@@ -1,11 +1,12 @@
 #!/bin/bash
 
-deepspeed llava/train/train_mem.py \
-    --deepspeed ./scripts/zero3.json \
-    --model_name_or_path liuhaotian/llava-v1.5-13b \
+EXPERIMENT="finetune-debub-7b"
+
+python llava/train/train_mem.py \
+    --model_name_or_path /grid/neuroai/home/tiliu/model/llava-v1.5-7b \
     --version v1 \
-    --data_path ./playground/data/llava_v1_5_mix665k.json \
-    --image_folder ./playground/data \
+    --data_path /grid/neuroai/home/tiliu/data/LLaVA-Instruct-150K/llava_v1_5_mix665k_image_found-coco.json \
+    --image_folder /grid/neuroai/home/tiliu/data/LLaVA-Instruct-150K/images \
     --vision_tower openai/clip-vit-large-patch14-336 \
     --mm_projector_type mlp2x_gelu \
     --mm_vision_select_layer -2 \
@@ -14,7 +15,7 @@ deepspeed llava/train/train_mem.py \
     --image_aspect_ratio pad \
     --group_by_modality_length True \
     --bf16 True \
-    --output_dir ./checkpoints/llava-v1.5-13b-task \
+    --output_dir /grid/neuroai/home/tiliu/experiments/flexformer-llava/$EXPERIMENT \
     --num_train_epochs 1 \
     --per_device_train_batch_size 16 \
     --per_device_eval_batch_size 4 \
@@ -33,4 +34,4 @@ deepspeed llava/train/train_mem.py \
     --gradient_checkpointing True \
     --dataloader_num_workers 4 \
     --lazy_preprocess True \
-    --report_to wandb
+    --report_to none

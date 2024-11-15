@@ -14,6 +14,7 @@
 
 
 from typing import List, Optional, Tuple, Union
+from dataclasses import dataclass, asdict
 
 import torch
 import torch.nn as nn
@@ -26,6 +27,9 @@ from transformers.generation.utils import GenerateOutput
 
 from ..llava_arch import LlavaMetaModel, LlavaMetaForCausalLM
 
+@dataclass
+class CausalLMOutputWithPastAndLabels(CausalLMOutputWithPast):
+    labels: torch.Tensor = None
 
 class LlavaConfig(LlamaConfig):
     model_type = "llava_llama"
@@ -68,7 +72,7 @@ class LlavaLlamaForCausalLM(LlamaForCausalLM, LlavaMetaForCausalLM):
         images: Optional[torch.FloatTensor] = None,
         image_sizes: Optional[List[List[int]]] = None,
         return_dict: Optional[bool] = None,
-    ) -> Union[Tuple, CausalLMOutputWithPast]:
+    ) -> Union[Tuple, CausalLMOutputWithPastAndLabels]:
 
         if inputs_embeds is None:
             (
@@ -99,7 +103,7 @@ class LlavaLlamaForCausalLM(LlamaForCausalLM, LlavaMetaForCausalLM):
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
             return_dict=return_dict
-        )
+        )#, labels
 
     @torch.no_grad()
     def generate(

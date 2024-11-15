@@ -2,17 +2,17 @@ import argparse
 import json
 import os
 
+import traceback
 import openai
 import time
 
 NUM_SECONDS_TO_SLEEP = 0.5
 
-
-def get_eval(content: str, max_tokens: int):
+def get_eval(client: openai.OpenAI, content: str, max_tokens: int):
     while True:
         try:
-            response = openai.ChatCompletion.create(
-                model='gpt-4-0314',
+            response = client.chat.completions.create(
+                model="meta-llama/Llama-3.1-70B-Instruct",
                 messages=[{
                     'role': 'system',
                     'content': 'You are a helpful and precise assistant for checking the quality of the answer.'
@@ -23,14 +23,14 @@ def get_eval(content: str, max_tokens: int):
                 temperature=0.2,  # TODO: figure out which temperature is best for evaluation
                 max_tokens=max_tokens,
             )
+
             break
-        except openai.error.RateLimitError:
-            pass
         except Exception as e:
+            print(traceback.format_exc())
             print(e)
         time.sleep(NUM_SECONDS_TO_SLEEP)
 
-    return response['choices'][0]['message']['content']
+    return response.choices[0].message.content
 
 
 def parse_score(review):
@@ -58,6 +58,11 @@ if __name__ == '__main__':
     parser.add_argument('-o', '--output')
     parser.add_argument('--max-tokens', type=int, default=1024, help='maximum number of tokens produced in the output')
     args = parser.parse_args()
+
+    client = openai.OpenAI(
+        base_url="http://localhost:44000/v1",
+        api_key="llama31"
+    )
 
     f_q = open(os.path.expanduser(args.question))
     f_ans1 = open(os.path.expanduser(args.answer_list[0]))
@@ -108,7 +113,7 @@ if __name__ == '__main__':
             'category': category
         }
         if idx >= len(cur_reviews):
-            review = get_eval(content, args.max_tokens)
+            review = get_eval(client, content, args.max_tokens)
             scores = parse_score(review)
             cur_js['content'] = review
             cur_js['tuple'] = scores

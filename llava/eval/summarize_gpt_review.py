@@ -5,6 +5,9 @@ from collections import defaultdict
 import numpy as np
 
 import argparse
+import pandas as pd
+from pathlib import Path
+
 
 def parse_args():
     parser = argparse.ArgumentParser(description='ChatGPT-based QA evaluation.')
@@ -52,9 +55,15 @@ if __name__ == '__main__':
                         scores['all'].append(review['tuple'])
                     else:
                         scores['all'].append(review['score'])
+        mean_scores = dict()
         for k, v in sorted(scores.items()):
             stats = np.asarray(v).mean(0).tolist()
             stats = [round(x, 3) for x in stats]
             # print(k, stats, round(stats[1]/stats[0]*100, 1))
             print(k, round(stats[1]/stats[0]*100, 1), round(stats[0] * 10, 1), round(stats[1] * 10, 1))
-        print('=================================')
+            mean_scores[k] = [round(stats[1]/stats[0]*100, 1), round(stats[0] * 10, 1), round(stats[1] * 10, 1)]
+        mean_scores = pd.DataFrame(mean_scores).T
+        print('='*80)
+        print(mean_scores)
+        print('='*80)
+        mean_scores.to_csv(Path(review_file).with_suffix(".summary.csv"))
